@@ -1,0 +1,1381 @@
+{
+  "name": "WF-01 — Asset Management SMKI",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 1 * *"
+            }
+          ]
+        }
+      },
+      "id": "d889905e-2818-4015-88e0-91b004d2175e",
+      "name": "Cron Bulanan (Tgl 1)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -1200,
+        64
+      ],
+      "notes": "Jalankan setiap tanggal 1, jam 08.00 — memulai proses review aset bulanan"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1I85_KsNBUYbTFr3SYDru-zgPqB7hhWkoUne-DOXb6ko",
+          "mode": "list",
+          "cachedResultName": "SMKI Asset Inventory",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1I85_KsNBUYbTFr3SYDru-zgPqB7hhWkoUne-DOXb6ko/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "ASSET_INVENTORY",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1I85_KsNBUYbTFr3SYDru-zgPqB7hhWkoUne-DOXb6ko/edit#gid=0"
+        },
+        "options": {}
+      },
+      "id": "d001124b-c16a-4cbe-973a-9d03bfba182a",
+      "name": "Baca Asset Inventory Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.2,
+      "position": [
+        -960,
+        64
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "dfz6rwQTjHtGuFLb",
+          "name": "Autoposting"
+        }
+      },
+      "notes": "Ambil semua data aset dari Google Sheets tab ASSET_INVENTORY"
+    },
+    {
+      "parameters": {
+        "jsCode": "const today = new Date();\nconst items = $input.all();\nconst result = [];\n\nfor (const item of items) {\n  const row = item.json;\n\n  // Hitung hari sejak review terakhir\n  const lastReview = row['Tanggal Review Terakhir']\n    ? new Date(row['Tanggal Review Terakhir'])\n    : new Date('2000-01-01');\n  const diffMs = today - lastReview;\n  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));\n\n  // Tentukan status review\n  let reviewStatus = 'OK';\n  let needsReminder = false;\n\n  if (diffDays >= 365) {\n    reviewStatus = 'OVERDUE';\n    needsReminder = true;\n  } else if (diffDays >= 330) {\n    reviewStatus = 'DUE_SOON';\n    needsReminder = true;\n  }\n\n  // Klasifikasi aset (jika belum ada)\n  const classification = row['Klasifikasi'] || 'Belum Diklasifikasi';\n\n  result.push({\n    json: {\n      ...row,\n      hari_sejak_review: diffDays,\n      review_status: reviewStatus,\n      needs_reminder: needsReminder,\n      klasifikasi: classification,\n      tanggal_cek: today.toISOString().split('T')[0]\n    }\n  });\n}\n\nreturn result;"
+      },
+      "id": "66a8a28b-a3ae-4219-9340-390e70f0e9f3",
+      "name": "Evaluasi Status Review Aset",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -768,
+        64
+      ],
+      "notes": "Hitung hari sejak review terakhir, tentukan status OVERDUE / DUE_SOON / OK"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "needs-reminder-check",
+              "leftValue": "={{ $json.needs_reminder }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a31d33a5-704c-4e8d-b8c6-0fbf7688f648",
+      "name": "IF: Perlu Reminder?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -448,
+        -224
+      ],
+      "notes": "Filter hanya aset yang perlu dikirim reminder (OVERDUE atau DUE_SOON)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "overdue-check",
+              "leftValue": "={{ $json.review_status }}",
+              "rightValue": "OVERDUE",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "fc179198-cbf1-4366-8f4c-7447a0f5cf56",
+      "name": "IF: Status OVERDUE?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        -240
+      ],
+      "notes": "Pisahkan aset OVERDUE (eskalasi) vs DUE_SOON (reminder biasa)"
+    },
+    {
+      "parameters": {
+        "chatId": "5927421703",
+        "text": "=⚠️ *ESKALASI SMKI — Review Aset OVERDUE*\n\n📋 *Nama Aset:* {{ $json['Nama Aset'] }}\n🏷️ *Klasifikasi:* {{ $json['Klasifikasi'] }}\n👤 *Asset Owner:* {{ $json['Asset Owner'] }}\n📍 *Lokasi:* {{ $json['Lokasi'] }}\n\n❌ *Status:* OVERDUE\n📅 *Review Terakhir:* {{ $json['Tanggal Review Terakhir'] }}\n🔢 *Sudah {{ $json.hari_sejak_review }} hari belum direview*\n\nMohon segera lakukan review aset ini.\nForm review: `https://n8n-iiehxgg6idvg.jkt1.sumopod.my.id/form-test/063f5136-3b36-487e-b9d0-694e874fca54`",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "2b0af274-35b7-4a38-a72d-7a95b66e01ac",
+      "name": "Telegram: Alert OVERDUE ke Manager",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [
+        16,
+        -304
+      ],
+      "webhookId": "39065b5d-54d0-46b1-a27f-20bb7873070b",
+      "credentials": {
+        "telegramApi": {
+          "id": "xYSTNugeAnhHKLFA",
+          "name": "Telegram account 2"
+        }
+      },
+      "notes": "Kirim alert eskalasi ke Manager/CISO untuk aset yang overdue review"
+    },
+    {
+      "parameters": {
+        "chatId": "5927421703",
+        "text": "=🔔 *Reminder SMKI — Review Aset Segera*\n\nYth. {{ $json['Asset Owner'] }},\n\n📋 *Nama Aset:* {{ $json['Nama Aset'] }}\n🏷️ *Klasifikasi:* {{ $json['Klasifikasi'] }}\n📍 *Lokasi:* {{ $json['Lokasi'] }}\n\n⏰ *Status:* Due Soon ({{ $json.hari_sejak_review }} hari sejak review terakhir)\n\nSilakan lakukan review aset sebelum tanggal jatuh tempo.\n\nForm review: `https://n8n-iiehxgg6idvg.jkt1.sumopod.my.id/form-test/063f5136-3b36-487e-b9d0-694e874fca54`\n\n_Pesan otomatis dari sistem SMKI_",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "ccd22aad-dc03-4f77-993c-9c92cced036c",
+      "name": "Telegram: Reminder DUE_SOON ke Owner",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [
+        16,
+        -160
+      ],
+      "webhookId": "0f55a026-45f0-42ec-b01d-40ccb0b47f57",
+      "credentials": {
+        "telegramApi": {
+          "id": "xYSTNugeAnhHKLFA",
+          "name": "Telegram account 2"
+        }
+      },
+      "notes": "Kirim reminder ke Asset Owner untuk aset yang akan segera jatuh tempo review"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1I85_KsNBUYbTFr3SYDru-zgPqB7hhWkoUne-DOXb6ko",
+          "mode": "list",
+          "cachedResultName": "SMKI Asset Inventory",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1I85_KsNBUYbTFr3SYDru-zgPqB7hhWkoUne-DOXb6ko/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "ASSET_INVENTORY",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1I85_KsNBUYbTFr3SYDru-zgPqB7hhWkoUne-DOXb6ko/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Asset ID": "={{ $('IF: Status OVERDUE?').item.json['Asset ID'] }}",
+            "Asset Owner": "={{ $('IF: Status OVERDUE?').item.json['Asset Owner'] }}",
+            "Tanggal Registrasi": "={{ $('IF: Status OVERDUE?').item.json['Tanggal Registrasi'] }}",
+            "Tanggal Review Terakhir": "={{ $('IF: Status OVERDUE?').item.json['Tanggal Review Terakhir'] }}",
+            "Tanggal Cek Terakhir": "={{ $('IF: Status OVERDUE?').item.json['Tanggal Cek Terakhir'] }}",
+            "Keterangan": "={{ $('IF: Status OVERDUE?').item.json.Keterangan }}",
+            "Status Review": "OK",
+            "Link Form Review": "https://n8n-iiehxgg6idvg.jkt1.sumopod.my.id/form-test/063f5136-3b36-487e-b9d0-694e874fca54"
+          },
+          "matchingColumns": [
+            "Asset ID"
+          ],
+          "schema": [
+            {
+              "id": "Asset ID",
+              "displayName": "Asset ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Nama Aset",
+              "displayName": "Nama Aset",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Tipe Aset",
+              "displayName": "Tipe Aset",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Klasifikasi",
+              "displayName": "Klasifikasi",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Asset Owner",
+              "displayName": "Asset Owner",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Departemen",
+              "displayName": "Departemen",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Lokasi",
+              "displayName": "Lokasi",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Nilai Aset",
+              "displayName": "Nilai Aset",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Tanggal Registrasi",
+              "displayName": "Tanggal Registrasi",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Tanggal Review Terakhir",
+              "displayName": "Tanggal Review Terakhir",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status Review",
+              "displayName": "Status Review",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Hari Sejak Review",
+              "displayName": "Hari Sejak Review",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Tanggal Cek Terakhir",
+              "displayName": "Tanggal Cek Terakhir",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Keterangan",
+              "displayName": "Keterangan",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Dibuat Oleh",
+              "displayName": "Dibuat Oleh",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Link Form Review",
+              "displayName": "Link Form Review",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "ok",
+              "displayName": "ok",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "result",
+              "displayName": "result",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "b7ea9aaf-95d4-463f-bf6b-20d414805ebd",
+      "name": "Update Status di Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.2,
+      "position": [
+        256,
+        -240
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "dfz6rwQTjHtGuFLb",
+          "name": "Autoposting"
+        }
+      },
+      "notes": "Update kolom status review di Google Sheets setelah evaluasi"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Proses input aset baru dari webhook\nconst body = $input.first().json.body || $input.first().json;\n\n// Generate Asset ID otomatis\nconst now = new Date();\nconst assetId = 'AST-' + now.getFullYear() +\n  String(now.getMonth() + 1).padStart(2, '0') +\n  String(now.getDate()).padStart(2, '0') + '-' +\n  Math.floor(Math.random() * 9000 + 1000);\n\n// Tentukan klasifikasi berdasarkan tipe aset\nconst tipeAset = (body.tipe_aset || '').toLowerCase();\nlet klasifikasi = 'Internal';\nif (tipeAset.includes('server') || tipeAset.includes('database') || tipeAset.includes('data pelanggan')) {\n  klasifikasi = 'Confidential';\n} else if (tipeAset.includes('sistem') || tipeAset.includes('aplikasi')) {\n  klasifikasi = 'Restricted';\n} else if (tipeAset.includes('website') || tipeAset.includes('publik')) {\n  klasifikasi = 'Public';\n}\n\nreturn [{\n  json: {\n    asset_id: assetId,\n    nama_aset: body.nama_aset || '',\n    tipe_aset: body.tipe_aset || '',\n    klasifikasi: klasifikasi,\n    asset_owner: body.asset_owner || '',\n    departemen: body.departemen || '',\n    lokasi: body.lokasi || '',\n    nilai_aset: body.nilai_aset || 'Medium',\n    tanggal_registrasi: now.toISOString().split('T')[0],\n    tanggal_review_terakhir: now.toISOString().split('T')[0],\n    status_review: 'OK',\n    keterangan: body.keterangan || '',\n    dibuat_oleh: body.dibuat_oleh || 'System'\n  }\n}];"
+      },
+      "id": "e3d97073-ec3a-458c-bd2b-5caeb41f16f2",
+      "name": "Siapkan Data Aset Baru",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1008,
+        272
+      ],
+      "notes": "Generate Asset ID, auto-klasifikasi berdasarkan tipe aset, format data untuk disimpan"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1I85_KsNBUYbTFr3SYDru-zgPqB7hhWkoUne-DOXb6ko",
+          "mode": "list",
+          "cachedResultName": "SMKI Asset Inventory",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1I85_KsNBUYbTFr3SYDru-zgPqB7hhWkoUne-DOXb6ko/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "ASSET_INVENTORY",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1I85_KsNBUYbTFr3SYDru-zgPqB7hhWkoUne-DOXb6ko/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Asset ID": "={{ $('Siapkan Data Aset Baru').item.json.asset_id }}",
+            "Nama Aset": "={{ $('Siapkan Data Aset Baru').item.json.nama_aset }}",
+            "Tipe Aset": "={{ $('Siapkan Data Aset Baru').item.json.tipe_aset }}",
+            "Klasifikasi": "={{ $('Siapkan Data Aset Baru').item.json.klasifikasi }}",
+            "Asset Owner": "={{ $('Siapkan Data Aset Baru').item.json.asset_owner }}",
+            "Departemen": "={{ $('Siapkan Data Aset Baru').item.json.departemen }}",
+            "Lokasi": "={{ $('Siapkan Data Aset Baru').item.json.lokasi }}",
+            "Nilai Aset": "={{ $('Siapkan Data Aset Baru').item.json.nilai_aset }}",
+            "Tanggal Registrasi": "={{ $('Siapkan Data Aset Baru').item.json.tanggal_registrasi }}",
+            "Tanggal Review Terakhir": "={{ $('Siapkan Data Aset Baru').item.json.tanggal_review_terakhir }}",
+            "Status Review": "={{ $('Siapkan Data Aset Baru').item.json.status_review }}",
+            "Keterangan": "={{ $('Siapkan Data Aset Baru').item.json.keterangan }}",
+            "Dibuat Oleh": "={{ $('Siapkan Data Aset Baru').item.json.dibuat_oleh }}",
+            "AI Risk Level": "={{ $json['AI Risk Level'] }}",
+            "AI ISO Controls": "={{ $json['AI ISO Controls'] }}",
+            "AI Reason": "={{ $json['AI Reason'] }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Asset ID",
+              "displayName": "Asset ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Nama Aset",
+              "displayName": "Nama Aset",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Tipe Aset",
+              "displayName": "Tipe Aset",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Klasifikasi",
+              "displayName": "Klasifikasi",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Asset Owner",
+              "displayName": "Asset Owner",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Departemen",
+              "displayName": "Departemen",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Lokasi",
+              "displayName": "Lokasi",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Nilai Aset",
+              "displayName": "Nilai Aset",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Tanggal Registrasi",
+              "displayName": "Tanggal Registrasi",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Tanggal Review Terakhir",
+              "displayName": "Tanggal Review Terakhir",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status Review",
+              "displayName": "Status Review",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Hari Sejak Review",
+              "displayName": "Hari Sejak Review",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Tanggal Cek Terakhir",
+              "displayName": "Tanggal Cek Terakhir",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Keterangan",
+              "displayName": "Keterangan",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Dibuat Oleh",
+              "displayName": "Dibuat Oleh",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Link Form Review",
+              "displayName": "Link Form Review",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "AI Risk Level",
+              "displayName": "AI Risk Level",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "AI ISO Controls",
+              "displayName": "AI ISO Controls",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "AI Reason",
+              "displayName": "AI Reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "fcc23327-dd22-493a-a4e3-f14bf82f748b",
+      "name": "Tambah Aset Baru ke Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.2,
+      "position": [
+        -240,
+        272
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "dfz6rwQTjHtGuFLb",
+          "name": "Autoposting"
+        }
+      },
+      "notes": "Simpan data aset baru ke Google Sheets ASSET_INVENTORY"
+    },
+    {
+      "parameters": {
+        "chatId": "5927421703",
+        "text": "=✅ *Aset Baru Berhasil Didaftarkan*\n\n📋 *Informasi Aset*\n• Asset ID: {{ $json['Asset ID'] }}\n• Nama Aset: {{ $json['Nama Aset'] }}\n• Tipe Aset: {{ $json['Tipe Aset'] }}\n• Klasifikasi: {{ $json['Klasifikasi'] }}\n• Asset Owner: {{ $json['Asset Owner'] }}\n• Departemen: {{ $json['Departemen'] }}\n• Tanggal Registrasi: {{ $json['Tanggal Registrasi'] }}\n\n🤖 *Analisis AI SMKI*\n• Risk Level: {{ $json['AI Risk Level'] }}\n\n• ISO Controls:\n{{ $json['AI ISO Controls'] }}\n\n• AI Reason:\n{{ $json['AI Reason'] }}\n\n🔐 *Aset telah ditambahkan ke inventory SMKI.*\n",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "ec9d3aa8-ebc1-4493-915b-c8c4dfc747e6",
+      "name": "Telegram: Konfirmasi Aset Baru",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [
+        -48,
+        272
+      ],
+      "webhookId": "1703e71f-1119-48db-aff8-ab525b7151b2",
+      "credentials": {
+        "telegramApi": {
+          "id": "xYSTNugeAnhHKLFA",
+          "name": "Telegram account 2"
+        }
+      },
+      "notes": "Konfirmasi ke channel SMKI bahwa aset baru berhasil didaftarkan"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate laporan ringkasan bulanan inventory\nconst items = $input.all();\nconst today = new Date().toISOString().split('T')[0];\n\nlet total = items.length;\n\nlet overdue = 0;\nlet dueSoon = 0;\nlet ok = 0;\n\n// Statistik klasifikasi aset\nlet byKlasifikasi = {\n  Confidential: 0,\n  Restricted: 0,\n  Internal: 0,\n  Public: 0,\n  'Belum Diklasifikasi': 0\n};\n\n// Statistik AI Risk Level\nlet byRiskLevel = {\n  Critical: 0,\n  High: 0,\n  Medium: 0,\n  Low: 0,\n  Unknown: 0\n};\n\n// Counter ISO Controls\nlet isoControlCounter = {};\n\nfor (const item of items) {\n\n  const row = item.json;\n\n  // =========================\n  // STATUS REVIEW\n  // =========================\n  const status = row['Status Review'] || row.review_status;\n\n  if (status === 'OVERDUE') {\n    overdue++;\n  }\n  else if (status === 'DUE_SOON') {\n    dueSoon++;\n  }\n  else {\n    ok++;\n  }\n\n  // =========================\n  // KLASIFIKASI\n  // =========================\n  const klasifikasi =\n    row['Klasifikasi'] ||\n    row.klasifikasi ||\n    'Belum Diklasifikasi';\n\n  if (byKlasifikasi[klasifikasi] !== undefined) {\n    byKlasifikasi[klasifikasi]++;\n  } else {\n    byKlasifikasi['Belum Diklasifikasi']++;\n  }\n\n  // =========================\n  // AI RISK LEVEL\n  // =========================\n  const risk =\n    row['AI Risk Level'] ||\n    row.ai_risk_level ||\n    'Unknown';\n\n  if (byRiskLevel[risk] !== undefined) {\n    byRiskLevel[risk]++;\n  } else {\n    byRiskLevel.Unknown++;\n  }\n\n  // =========================\n  // AI ISO CONTROLS\n  // =========================\n  const isoControls =\n    row['AI ISO Controls'] ||\n    row.ai_iso_controls ||\n    '';\n\n  if (isoControls) {\n\n    const controls = isoControls\n      .split(',')\n      .map(c => c.trim())\n      .filter(Boolean);\n\n    for (const control of controls) {\n\n      if (!isoControlCounter[control]) {\n        isoControlCounter[control] = 0;\n      }\n\n      isoControlCounter[control]++;\n    }\n  }\n}\n\n// =========================\n// TOP ISO CONTROLS\n// =========================\nconst topControls = Object.entries(isoControlCounter)\n  .sort((a, b) => b[1] - a[1])\n  .slice(0, 5);\n\nconst topControlsText = topControls.length\n  ? topControls\n      .map(([control, count]) =>\n        `• ${control} (${count} aset)`\n      )\n      .join('\\n')\n  : 'Tidak ada data';\n\n// =========================\n// GENERATE LAPORAN\n// =========================\nconst laporan = `📊 *LAPORAN INVENTORY ASET SMKI*\n📅 Tanggal: ${today}\n\n*Ringkasan Inventory:*\n• Total Aset: ${total}\n• ✅ OK: ${ok}\n• ⏰ Due Soon: ${dueSoon}\n• ❌ Overdue: ${overdue}\n\n*Klasifikasi Aset:*\n• Confidential: ${byKlasifikasi.Confidential}\n• Restricted: ${byKlasifikasi.Restricted}\n• Internal: ${byKlasifikasi.Internal}\n• Public: ${byKlasifikasi.Public}\n• Belum Diklasifikasi: ${byKlasifikasi['Belum Diklasifikasi']}\n\n*AI Risk Analysis:*\n• Critical: ${byRiskLevel.Critical}\n• High: ${byRiskLevel.High}\n• Medium: ${byRiskLevel.Medium}\n• Low: ${byRiskLevel.Low}\n• Unknown: ${byRiskLevel.Unknown}\n\n*Top ISO 27001 Controls:*\n${topControlsText}\n\n_Laporan otomatis WF-01 Asset Management_`;\n\n// =========================\n// RETURN\n// =========================\nreturn [\n  {\n    json: {\n      laporan,\n\n      tanggal: today,\n\n      total,\n      overdue,\n      due_soon: dueSoon,\n      ok,\n\n      by_klasifikasi: byKlasifikasi,\n\n      by_risk_level: byRiskLevel,\n\n      top_iso_controls: topControls\n    }\n  }\n];"
+      },
+      "id": "721198dc-7c3e-43f1-a331-7a88982ca7af",
+      "name": "Generate Laporan Ringkasan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -544,
+        64
+      ],
+      "notes": "Buat laporan ringkasan bulanan: total aset, status review, distribusi klasifikasi"
+    },
+    {
+      "parameters": {
+        "chatId": "5927421703",
+        "text": "={{ $json.laporan }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "e85e81b0-186f-4fbe-8885-53af3924e413",
+      "name": "Telegram: Kirim Laporan Bulanan",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [
+        -224,
+        -80
+      ],
+      "webhookId": "f1f06b74-cc06-4df4-8a5a-a61a208af6a6",
+      "credentials": {
+        "telegramApi": {
+          "id": "xYSTNugeAnhHKLFA",
+          "name": "Telegram account 2"
+        }
+      },
+      "notes": "Kirim laporan ringkasan bulanan ke channel SMKI"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1I85_KsNBUYbTFr3SYDru-zgPqB7hhWkoUne-DOXb6ko",
+          "mode": "list",
+          "cachedResultName": "SMKI Asset Inventory",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1I85_KsNBUYbTFr3SYDru-zgPqB7hhWkoUne-DOXb6ko/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 892178246,
+          "mode": "list",
+          "cachedResultName": "ASSET_LOG",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1I85_KsNBUYbTFr3SYDru-zgPqB7hhWkoUne-DOXb6ko/edit#gid=892178246"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Tanggal": "={{ $json.tanggal }}",
+            "Total Aset": "={{ $json.total }}",
+            "OK": "={{ $json.ok }}",
+            "Due Soon": "={{ $json.due_soon }}",
+            "Overdue": "={{ $json.overdue }}",
+            "Confidential": "={{ $json.by_klasifikasi.Confidential }}",
+            "Restricted": "={{ $json.by_klasifikasi.Restricted }}",
+            "Internal": "={{ $json.by_klasifikasi.Internal }}",
+            "Public": "={{ $json.by_klasifikasi.Public }}",
+            "Jenis Run": "Cron Bulanan"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Tanggal",
+              "displayName": "Tanggal",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Total Aset",
+              "displayName": "Total Aset",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "OK",
+              "displayName": "OK",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Due Soon",
+              "displayName": "Due Soon",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Overdue",
+              "displayName": "Overdue",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Confidential",
+              "displayName": "Confidential",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Restricted",
+              "displayName": "Restricted",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Internal",
+              "displayName": "Internal",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Public",
+              "displayName": "Public",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Jenis Run",
+              "displayName": "Jenis Run",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "8df5f918-c495-4878-b217-283ef3eab6a8",
+      "name": "Simpan Log Bulanan ke Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.2,
+      "position": [
+        16,
+        64
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "dfz6rwQTjHtGuFLb",
+          "name": "Autoposting"
+        }
+      },
+      "notes": "Simpan ringkasan bulanan ke tab ASSET_LOG sebagai evidence audit"
+    },
+    {
+      "parameters": {},
+      "id": "2128b293-168b-4499-b69a-8e52b8f6483c",
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1184,
+        -144
+      ],
+      "notes": "Tangkap error workflow dan kirim alert ke admin"
+    },
+    {
+      "parameters": {
+        "chatId": "5927421703",
+        "text": "=🚨 *ERROR — WF-01 Asset Management*\n\n⚠️ Terjadi error pada workflow:\n`{{ $json.execution.error.message }}`\n\nWorkflow: {{ $workflow.name }}\nWaktu: {{ $now }}\n\nMohon cek n8n dashboard segera.",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "1ca99b52-92de-45be-a04b-d721cedbf066",
+      "name": "Telegram: Alert Error ke Admin",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [
+        -960,
+        -144
+      ],
+      "webhookId": "85f8c9e6-b724-4240-84c4-bb01615a8837",
+      "credentials": {
+        "telegramApi": {
+          "id": "xYSTNugeAnhHKLFA",
+          "name": "Telegram account 2"
+        }
+      },
+      "notes": "Kirim notifikasi error ke admin n8n jika workflow gagal"
+    },
+    {
+      "parameters": {
+        "formTitle": "Form Registrasi Aset SMKI",
+        "formDescription": "Isi data aset dengan lengkap dan benar",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Asset ID",
+              "fieldName": "asset_id",
+              "defaultValue": "AST-20260501-1005",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Nama Aset",
+              "fieldName": "nama_aset",
+              "defaultValue": "Sistem HRIS Internal",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Tipe Aset",
+              "fieldType": "dropdown",
+              "fieldName": "tipe_aset",
+              "defaultValue": "Aplikasi",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Server"
+                  },
+                  {
+                    "option": "Database"
+                  },
+                  {
+                    "option": "Website"
+                  },
+                  {
+                    "option": "Endpoint Device"
+                  },
+                  {
+                    "option": "Aplikasi"
+                  },
+                  {
+                    "option": "Network Device"
+                  },
+                  {
+                    "option": "Lainnya"
+                  }
+                ]
+              },
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Klasifikasi",
+              "fieldType": "radio",
+              "fieldName": "klasifikasi",
+              "defaultValue": "Restricted",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Confidential"
+                  },
+                  {
+                    "option": "Restricted"
+                  },
+                  {
+                    "option": "Internal"
+                  },
+                  {
+                    "option": "Public"
+                  }
+                ]
+              },
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Asset Owner",
+              "fieldName": "asset_owner",
+              "defaultValue": "Siti Nurhaliza",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Departemen",
+              "fieldType": "dropdown",
+              "fieldName": "departemen",
+              "defaultValue": "HR Department",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "IT Infrastructure"
+                  },
+                  {
+                    "option": "Data Management"
+                  },
+                  {
+                    "option": "Marketing"
+                  },
+                  {
+                    "option": "Management"
+                  },
+                  {
+                    "option": "HR Department"
+                  },
+                  {
+                    "option": "Finance"
+                  },
+                  {
+                    "option": "Operations"
+                  },
+                  {
+                    "option": "Lainnya"
+                  }
+                ]
+              },
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Lokasi",
+              "fieldName": "lokasi",
+              "defaultValue": "Cloud Jakarta",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Nilai Aset",
+              "fieldType": "radio",
+              "fieldName": "nilai_aset",
+              "defaultValue": "High",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Critical"
+                  },
+                  {
+                    "option": "High"
+                  },
+                  {
+                    "option": "Medium"
+                  },
+                  {
+                    "option": "Low"
+                  }
+                ]
+              },
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Tanggal Registrasi",
+              "fieldType": "date",
+              "fieldName": "tanggal_registrasi",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Tanggal Review Terakhir",
+              "fieldType": "date",
+              "fieldName": "tanggal_review_terakhir",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Status Review",
+              "fieldType": "radio",
+              "fieldName": "status_review",
+              "defaultValue": "OVERDUE",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "OK"
+                  },
+                  {
+                    "option": "DUE_SOON"
+                  },
+                  {
+                    "option": "OVERDUE"
+                  }
+                ]
+              },
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Keterangan",
+              "fieldType": "textarea",
+              "fieldName": "keterangan",
+              "defaultValue": "Sistem HR internal"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.5,
+      "position": [
+        -1200,
+        272
+      ],
+      "id": "301dcdf0-80ef-408c-aa32-8348ed87684d",
+      "name": "On form submission",
+      "webhookId": "063f5136-3b36-487e-b9d0-694e874fca54"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Anda adalah analis SMKI yang memahami ISO/IEC 27001:2022 Annex A controls.\n\nTugas Anda adalah menganalisis aset informasi dan memberikan:\n\n* risk_level\n* Annex A controls yang relevan\n* alasan singkat\n\nData aset:\n\nNama Aset: {{ $json.nama_aset }}\nTipe Aset: {{ $json.tipe_aset }}\nKlasifikasi: {{ $json.klasifikasi }}\nDepartemen: {{ $json.departemen }}\nLokasi: {{ $json.lokasi }}\nNilai Aset: {{ $json.nilai_aset }}\n\nATURAN PENTING:\n\n* Gunakan hanya Annex A ISO/IEC 27001:2022\n* Maksimal 5 control\n* Gunakan control yang paling relevan\n* Risk level hanya boleh:\n  Critical, High, Medium, Low\n* Jangan menjelaskan panjang\n* Jangan menggunakan markdown\n* Jangan menambahkan teks apapun di luar JSON\n* Output HARUS valid JSON\n* Semua field wajib terisi\n* Jangan mengosongkan array iso_controls\n\nGunakan format output PERSIS seperti ini:\n\n{\n\"risk_level\": \"High\",\n\"iso_controls\": [\n\"A.5.9\",\n\"A.5.12\"\n],\n\"reason\": \"Aset mengandung informasi penting yang memerlukan kontrol akses dan klasifikasi informasi.\"\n}\n",
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        -752,
+        272
+      ],
+      "id": "93827b49-fa62-4357-89c9-230b90ceb078",
+      "name": "Basic LLM Chain"
+    },
+    {
+      "parameters": {
+        "model": "llama-3.1-8b-instant",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        -752,
+        448
+      ],
+      "id": "f683c7ea-55c1-4cc4-9a9a-a55a03b34ade",
+      "name": "Groq Chat Model",
+      "credentials": {
+        "groqApi": {
+          "id": "TBKCwA5KivmDJdyo",
+          "name": "Groq account 2(kaff23)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const assetData = $('Siapkan Data Aset Baru').first().json;\n\n// Ambil text dari LLM\nconst rawAi = $('Basic LLM Chain').first().json.text || '{}';\n\nlet parsedAi;\n\ntry {\n\n  // Bersihkan markdown jika ada\n  const cleaned = rawAi\n    .replace(/```json/g, '')\n    .replace(/```/g, '')\n    .trim();\n\n  parsedAi = JSON.parse(cleaned);\n\n} catch (error) {\n\n  parsedAi = {\n    risk_level: 'Unknown',\n    iso_controls: [],\n    reason: 'Failed to parse AI output'\n  };\n}\n\nreturn [\n  {\n    json: {\n\n      // DATA ASET\n      ...assetData,\n\n      // HASIL AI\n      'AI Risk Level':\n        parsedAi.risk_level || 'Unknown',\n\n      'AI ISO Controls':\n        Array.isArray(parsedAi.iso_controls)\n          ? parsedAi.iso_controls.join(', ')\n          : '',\n\n      'AI Reason':\n        parsedAi.reason || 'No reason'\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -432,
+        272
+      ],
+      "id": "f1f2ad82-2609-494a-8718-9dbdc4cb1bc6",
+      "name": "Code in JavaScript"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Cron Bulanan (Tgl 1)": {
+      "main": [
+        [
+          {
+            "node": "Baca Asset Inventory Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Baca Asset Inventory Sheet": {
+      "main": [
+        [
+          {
+            "node": "Evaluasi Status Review Aset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluasi Status Review Aset": {
+      "main": [
+        [
+          {
+            "node": "IF: Perlu Reminder?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Generate Laporan Ringkasan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Perlu Reminder?": {
+      "main": [
+        [
+          {
+            "node": "IF: Status OVERDUE?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Status OVERDUE?": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Alert OVERDUE ke Manager",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram: Reminder DUE_SOON ke Owner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram: Alert OVERDUE ke Manager": {
+      "main": [
+        [
+          {
+            "node": "Update Status di Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram: Reminder DUE_SOON ke Owner": {
+      "main": [
+        [
+          {
+            "node": "Update Status di Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Laporan Ringkasan": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Kirim Laporan Bulanan",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Simpan Log Bulanan ke Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Siapkan Data Aset Baru": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tambah Aset Baru ke Sheet": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Konfirmasi Aset Baru",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram: Konfirmasi Aset Baru": {
+      "main": [
+        []
+      ]
+    },
+    "Error Handler": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Alert Error ke Admin",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "On form submission": {
+      "main": [
+        [
+          {
+            "node": "Siapkan Data Aset Baru",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Tambah Aset Baru ke Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "9d77626a-398d-4aa6-a35a-acdc410fb769",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "37e9a66e7d3e46d7627d672ccf295a9c9772ebeec4bcaca586afcb7d6b434629"
+  },
+  "id": "DrupSe4QVPR83uDw",
+  "tags": []
+}
